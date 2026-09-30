@@ -12,6 +12,22 @@
   ],
   "releases": [
     {
+      "version": "1.0.6",
+      "tag": "v1.0.6",
+      "released_at": "2026-09-30T15:53:33.6139134Z",
+      "channel": "Stable",
+      "release_notes": "Rebuilt against the metadata redesign in the current abstractions. Entries now carry a \u0060MetadataGuid\u0060 as their ID, so the importer reads AniDB IDs from \u0060AnidbID\u0060 and from each relation\u0027s \u0060RelatedID\u0060, and looks episodes up through the metadata service. Imports behave as before, including the order prequels and sequels are searched in.\n\nRequires Shoko Server with abstractions \u00606.0.0-alpha.95\u0060.",
+      "dependencies": [],
+      "archives": [
+        {
+          "runtime": "any",
+          "abstraction": "6.0.0",
+          "url": "https://github.com/revam/dotnet-shoko-plugin-offline-importer/releases/download/v1.0.6/OfflineImporter-v1.0.6-any.zip",
+          "checksum": "sha256:53ac80185ba7a94939614f90ab33dfcfed282e1f342e37d0cad473d1d95baff0"
+        }
+      ]
+    },
+    {
       "version": "1.0.5",
       "tag": "v1.0.5",
       "released_at": "2026-09-18T04:42:08.5382664Z",
