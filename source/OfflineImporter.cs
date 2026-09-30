@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.Serialization;
@@ -18,12 +19,13 @@ using Shoko.Abstractions.Config.Attributes;
 using Shoko.Abstractions.Config.Components;
 using Shoko.Abstractions.Config.Enums;
 using Shoko.Abstractions.Config.Events;
-using Shoko.Abstractions.Metadata.Enums;
 using Shoko.Abstractions.Exceptions;
 using Shoko.Abstractions.Extensions;
+using Shoko.Abstractions.Metadata;
 using Shoko.Abstractions.Metadata.Anidb;
 using Shoko.Abstractions.Metadata.Anidb.Enums;
 using Shoko.Abstractions.Metadata.Anidb.Services;
+using Shoko.Abstractions.Metadata.Enums;
 using Shoko.Abstractions.Metadata.Services;
 using Shoko.Abstractions.Plugin;
 using Shoko.Abstractions.Utilities;
@@ -144,7 +146,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             return null;
         }
 
-        _logger.LogDebug("Getting release info for {Video}", video.ID);
+        _logger.LogDebug("Getting release info for {Video}", video.LocalID);
         var videoFiles = video.Files;
         foreach (var location in videoFiles)
         {
@@ -299,7 +301,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             releaseInfo = await GetReleaseInfoForMatchAndAnime(match, searchResult, cancellationToken, year: match.Year, animeType: match.SeriesType, followSeasonNumber: followSeasonNumber).ConfigureAwait(false);
             if (releaseInfo is not null)
             {
-                _logger.LogDebug("Found match for {ShowName} in search results. (Anime={AnimeID})", match.SeriesName, searchResult.ID);
+                _logger.LogDebug("Found match for {ShowName} in search results. (Anime={AnimeID})", match.SeriesName, searchResult.AnidbID);
                 return releaseInfo;
             }
         }
@@ -320,14 +322,14 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             var method = _configurationProvider.Load().AllowRemote
                 ? AnidbRefreshMethod.Cache | AnidbRefreshMethod.Remote | AnidbRefreshMethod.SkipSupplementaryUpdate
                 : AnidbRefreshMethod.Cache | AnidbRefreshMethod.SkipSupplementaryUpdate;
-            _logger.LogDebug("Refreshing AniDB Anime {AnimeName} (Anime={AnimeID},Method={Method})", searchResult.DefaultTitle.Value, searchResult.ID, method.ToString());
+            _logger.LogDebug("Refreshing AniDB Anime {AnimeName} (Anime={AnimeID},Method={Method})", searchResult.DefaultTitle.Value, searchResult.AnidbID, method.ToString());
             try
             {
-                anime = await _anidbService.RefreshAnimeByID(searchResult.ID, method, cancellationToken).ConfigureAwait(false);
+                anime = await _anidbService.RefreshAnimeByID(searchResult.AnidbID, method, cancellationToken).ConfigureAwait(false);
             }
             catch (AnidbHttpBannedException ex)
             {
-                _logger.LogWarning(ex, "Got banned while refreshing {AnimeName} (Anime={AnimeID})", searchResult.DefaultTitle.Value, searchResult.ID);
+                _logger.LogWarning(ex, "Got banned while refreshing {AnimeName} (Anime={AnimeID})", searchResult.DefaultTitle.Value, searchResult.AnidbID);
                 return null;
             }
 
@@ -338,18 +340,18 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
         // Forced match by custom rule.
         if (match.AnidbAnimeId.HasValue && match.AnidbEpisodeId.HasValue)
         {
-            var episode = anime.Episodes.FirstOrDefault(x => x.ID == match.AnidbEpisodeId.Value);
+            var episode = anime.Episodes.FirstOrDefault(x => x.AnidbID == match.AnidbEpisodeId.Value);
             if (episode is null)
             {
-                _logger.LogDebug("Given episode ID does not belong to the given anime ID. (Anime={AnimeID},Episode={EpisodeID})", anime.ID, match.AnidbEpisodeId);
+                _logger.LogDebug("Given episode ID does not belong to the given anime ID. (Anime={AnimeID},Episode={EpisodeID})", anime.AnidbID, match.AnidbEpisodeId);
                 return null;
             }
 
-            _logger.LogDebug("Found episode {EpisodeType} {EpisodeNumber} for {ShowName}. (Anime={AnimeID},Episode={EpisodeID})", episode.Type.ToString(), episode.EpisodeNumber, anime.DefaultTitle.Value, anime.ID, episode.ID);
+            _logger.LogDebug("Found episode {EpisodeType} {EpisodeNumber} for {ShowName}. (Anime={AnimeID},Episode={EpisodeID})", episode.Type.ToString(), episode.EpisodeNumber, anime.DefaultTitle.Value, anime.AnidbID, episode.AnidbID);
             return new ReleaseInfo()
             {
-                ID = $"{IdPrefix}{anime.ID}-{episode.ID}",
-                CrossReferences = [new ReleaseVideoCrossReference() { AnidbAnimeID = anime.ID, AnidbEpisodeID = episode.ID }],
+                ID = $"{IdPrefix}{anime.AnidbID}-{episode.AnidbID}",
+                CrossReferences = [new ReleaseVideoCrossReference() { AnidbAnimeID = anime.AnidbID, AnidbEpisodeID = episode.AnidbID }],
             };
         }
 
@@ -360,7 +362,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             // it's most likely haven't aired yet.
             if (anime.AirDate is not { } currentAirDate)
             {
-                _logger.LogDebug("Season number is set but anime {AnimeName} does not have an air date. (Anime={AnimeID})", searchResult.DefaultTitle.Value, searchResult.ID);
+                _logger.LogDebug("Season number is set but anime {AnimeName} does not have an air date. (Anime={AnimeID})", searchResult.DefaultTitle.Value, searchResult.AnidbID);
                 return null;
             }
 
@@ -368,7 +370,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             // following pre-sequels in either direction.
             if (previousAirDate.HasValue && (depth is 0 ? currentAirDate > previousAirDate.Value : currentAirDate < previousAirDate.Value))
             {
-                _logger.LogDebug("Anime aired after previous air date. (Anime={AnimeID})", searchResult.ID);
+                _logger.LogDebug("Anime aired after previous air date. (Anime={AnimeID})", searchResult.AnidbID);
                 return null;
             }
 
@@ -378,26 +380,23 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             var relations = anime.RelatedSeries;
             if (depth is 0 && relations.Any(x => x is { RelationType: RelationType.Prequel }))
             {
-                _logger.LogDebug("Attempting prequel(s) for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
-                var prequels = relations
-                    .Where(x => x is { RelationType: RelationType.Prequel })
-                    .OrderBy(x => x.RelatedID)
-                    .ToList();
+                _logger.LogDebug("Attempting prequel(s) for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
+                var prequels = GetRelatedAnimeIDs(anime, RelationType.Prequel);
                 var shouldContinue = true;
-                foreach (var prequel in prequels)
+                foreach (var prequelID in prequels)
                 {
-                    var prequelSearch = _anidbService.SearchAnimeByID(prequel.RelatedID);
+                    var prequelSearch = _anidbService.SearchAnimeByID(prequelID);
                     if (prequelSearch is null)
                     {
-                        _logger.LogDebug("Unknown prequel for {AnimeName}. (Anime={AnimeID},PrequelAnime={PrequelAnimeID})", anime.DefaultTitle.Value, anime.ID, prequel.RelatedID);
+                        _logger.LogDebug("Unknown prequel for {AnimeName}. (Anime={AnimeID},PrequelAnime={PrequelAnimeID})", anime.DefaultTitle.Value, anime.AnidbID, prequelID);
                         continue;
                     }
 
-                    _logger.LogDebug("Attempting prequel {PrequelAnimeName} for {AnimeName}. (Anime={AnimeID},PrequelAnime={PrequelAnimeID})", prequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, prequelSearch.ID);
+                    _logger.LogDebug("Attempting prequel {PrequelAnimeName} for {AnimeName}. (Anime={AnimeID},PrequelAnime={PrequelAnimeID})", prequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, prequelSearch.AnidbID);
                     var finalResult = await GetReleaseInfoForMatchAndAnime(match, prequelSearch, cancellationToken, depth, year, animeType, followSeasonNumber, currentAirDate.ToDateTime()).ConfigureAwait(false);
                     if (finalResult is not null)
                     {
-                        _logger.LogDebug("Found prequel {PrequelAnimeName} for {AnimeName}. (Anime={AnimeID},PrequelAnime={PrequelAnimeID})", prequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, prequelSearch.ID);
+                        _logger.LogDebug("Found prequel {PrequelAnimeName} for {AnimeName}. (Anime={AnimeID},PrequelAnime={PrequelAnimeID})", prequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, prequelSearch.AnidbID);
                         return finalResult;
                     }
 
@@ -407,7 +406,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
 
                 if (!shouldContinue)
                 {
-                    _logger.LogDebug("No prequel found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+                    _logger.LogDebug("No prequel found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
                     return null;
                 }
             }
@@ -417,13 +416,13 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             {
                 if (year.HasValue && (currentAirDate.Year != year.Value))
                 {
-                    _logger.LogDebug("Year mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundYear={FoundYear},ExpectedYear={ExpectedYear})", match.SeriesName, anime.DefaultTitle.Value, anime.ID, currentAirDate.Year, year);
+                    _logger.LogDebug("Year mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundYear={FoundYear},ExpectedYear={ExpectedYear})", match.SeriesName, anime.DefaultTitle.Value, anime.AnidbID, currentAirDate.Year, year);
                     return null;
                 }
 
                 if (animeType is not null && anime.Type != animeType)
                 {
-                    _logger.LogDebug("Type mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundType={FoundType},ExpectedType={ExpectedType})", match.SeriesName, anime.DefaultTitle.Value, anime.ID, anime.Type, animeType);
+                    _logger.LogDebug("Type mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundType={FoundType},ExpectedType={ExpectedType})", match.SeriesName, anime.DefaultTitle.Value, anime.AnidbID, anime.Type, animeType);
                     return null;
                 }
             }
@@ -434,29 +433,26 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             const int OvaCutOff = 8;
             if (anime.Type is AnimeType.Movie or AnimeType.TVSpecial || (anime.Type is AnimeType.OVA && anime.EpisodeCounts[EpisodeType.Episode] <= OvaCutOff))
             {
-                var sequels = relations
-                    .Where(x => x is { RelationType: RelationType.Sequel })
-                    .OrderBy(x => x.RelatedID)
-                    .ToList();
-                foreach (var sequel in sequels)
+                var sequels = GetRelatedAnimeIDs(anime, RelationType.Sequel);
+                foreach (var sequelID in sequels)
                 {
-                    var sequelSearch = _anidbService.SearchAnimeByID(sequel.RelatedID);
+                    var sequelSearch = _anidbService.SearchAnimeByID(sequelID);
                     if (sequelSearch is null)
                     {
-                        _logger.LogDebug("Unknown sequel for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", anime.DefaultTitle.Value, anime.ID, sequel.RelatedID);
+                        _logger.LogDebug("Unknown sequel for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", anime.DefaultTitle.Value, anime.AnidbID, sequelID);
                         continue;
                     }
 
-                    _logger.LogDebug("Attempting sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, sequelSearch.ID);
+                    _logger.LogDebug("Attempting sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, sequelSearch.AnidbID);
                     var finalResult = await GetReleaseInfoForMatchAndAnime(match, sequelSearch, cancellationToken, depth, year, animeType, followSeasonNumber, previousAirDate).ConfigureAwait(false);
                     if (finalResult is not null)
                     {
-                        _logger.LogDebug("Found sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, sequelSearch.ID);
+                        _logger.LogDebug("Found sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, sequelSearch.AnidbID);
                         return finalResult;
                     }
                 }
 
-                _logger.LogDebug("No sequel found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+                _logger.LogDebug("No sequel found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
                 return null;
             }
 
@@ -464,29 +460,26 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             // exhaust all sequels.
             if (depth + 1 != match.SeasonNumber)
             {
-                var sequels = relations
-                    .Where(x => x is { RelationType: RelationType.Sequel })
-                    .OrderBy(x => x.RelatedID)
-                    .ToList();
-                foreach (var sequel in sequels)
+                var sequels = GetRelatedAnimeIDs(anime, RelationType.Sequel);
+                foreach (var sequelID in sequels)
                 {
-                    var sequelSearch = _anidbService.SearchAnimeByID(sequel.RelatedID);
+                    var sequelSearch = _anidbService.SearchAnimeByID(sequelID);
                     if (sequelSearch is null)
                     {
-                        _logger.LogDebug("Unknown sequel for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", anime.DefaultTitle.Value, anime.ID, sequel.RelatedID);
+                        _logger.LogDebug("Unknown sequel for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", anime.DefaultTitle.Value, anime.AnidbID, sequelID);
                         continue;
                     }
 
-                    _logger.LogDebug("Attempting sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, sequelSearch.ID);
+                    _logger.LogDebug("Attempting sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, sequelSearch.AnidbID);
                     var finalResult = await GetReleaseInfoForMatchAndAnime(match, sequelSearch, cancellationToken, depth + 1, year, animeType, followSeasonNumber, currentAirDate.ToDateTime()).ConfigureAwait(false);
                     if (finalResult is not null)
                     {
-                        _logger.LogDebug("Found sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, sequelSearch.ID);
+                        _logger.LogDebug("Found sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, sequelSearch.AnidbID);
                         return finalResult;
                     }
                 }
 
-                _logger.LogDebug("No sequel found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+                _logger.LogDebug("No sequel found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
                 return null;
             }
         }
@@ -496,7 +489,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
         // fetch it.
         if (depth is > 0 && anime is { Type: AnimeType.Movie or AnimeType.Unknown })
         {
-            _logger.LogDebug("Skipping unknown or movie {AnimeName} (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+            _logger.LogDebug("Skipping unknown or movie {AnimeName} (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
             return null;
         }
 
@@ -512,13 +505,13 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
             {
                 if (year.HasValue && (!anime.AirDate.HasValue || anime.AirDate.Value.Year != year.Value))
                 {
-                    _logger.LogDebug("Year mismatch between {ShowName} and {AnimeName} (Anime={AnimeID},FoundYear={FoundYear},ExpectedYear={ExpectedYear})", match.SeriesName, anime.DefaultTitle.Value, anime.ID, anime.AirDate?.Year, year);
+                    _logger.LogDebug("Year mismatch between {ShowName} and {AnimeName} (Anime={AnimeID},FoundYear={FoundYear},ExpectedYear={ExpectedYear})", match.SeriesName, anime.DefaultTitle.Value, anime.AnidbID, anime.AirDate?.Year, year);
                     return null;
                 }
 
                 if (animeType is not null && anime.Type != animeType)
                 {
-                    _logger.LogDebug("Type mismatch between {ShowName} and {AnimeName} (Anime={AnimeID},FoundType={FoundType},ExpectedType={ExpectedType})", match.SeriesName, anime.DefaultTitle.Value, anime.ID, anime.Type, animeType);
+                    _logger.LogDebug("Type mismatch between {ShowName} and {AnimeName} (Anime={AnimeID},FoundType={FoundType},ExpectedType={ExpectedType})", match.SeriesName, anime.DefaultTitle.Value, anime.AnidbID, anime.Type, animeType);
                     return null;
                 }
 
@@ -531,10 +524,10 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
                     end = 100;
                 return new ReleaseInfo()
                 {
-                    ID = IdPrefix + episodes.Select(x => $"{anime.ID}-{x.ID}").Join(','),
+                    ID = IdPrefix + episodes.Select(x => $"{anime.AnidbID}-{x.AnidbID}").Join(','),
                     CrossReferences = [
-                        new ReleaseVideoCrossReference() { AnidbAnimeID = anime.ID, AnidbEpisodeID = allEpisodes[0].ID, PercentageStart = start, PercentageEnd = end },
-                        .. episodes.Select(x => new ReleaseVideoCrossReference() { AnidbAnimeID = anime.ID, AnidbEpisodeID = x.ID }),
+                        new ReleaseVideoCrossReference() { AnidbAnimeID = anime.AnidbID, AnidbEpisodeID = allEpisodes[0].AnidbID, PercentageStart = start, PercentageEnd = end },
+                        .. episodes.Select(x => new ReleaseVideoCrossReference() { AnidbAnimeID = anime.AnidbID, AnidbEpisodeID = x.AnidbID }),
                     ],
                 };
             }
@@ -614,22 +607,21 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
                     match.EpisodeEnd,
                     highestEpisodeNumber,
                     anime.DefaultTitle.Value,
-                    anime.ID
+                    anime.AnidbID
                 );
-                var sequels = anime.RelatedSeries.Where(x => x.RelationType == RelationType.Sequel)
-                    .ToList();
+                var sequels = GetRelatedAnimeIDs(anime, RelationType.Sequel);
                 if (sequels.Count == 0)
                 {
-                    _logger.LogDebug("No sequels found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+                    _logger.LogDebug("No sequels found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
                     return null;
                 }
 
-                foreach (var sequel in sequels)
+                foreach (var sequelID in sequels)
                 {
-                    var sequelSearch = _anidbService.SearchAnimeByID(sequel.RelatedID);
+                    var sequelSearch = _anidbService.SearchAnimeByID(sequelID);
                     if (sequelSearch is null)
                     {
-                        _logger.LogDebug("Unknown sequel for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", anime.DefaultTitle.Value, anime.ID, sequel.RelatedID);
+                        _logger.LogDebug("Unknown sequel for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", anime.DefaultTitle.Value, anime.AnidbID, sequelID);
                         continue;
                     }
 
@@ -648,20 +640,20 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
                         Version = match.Version,
                         RuleName = match.RuleName,
                     };
-                    _logger.LogDebug("Attempting sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, sequelSearch.ID);
+                    _logger.LogDebug("Attempting sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, sequelSearch.AnidbID);
                     var sequelResult = await GetReleaseInfoForMatchAndAnime(sequelMatch, sequelSearch, cancellationToken, depth + 1, year, animeType, followSeasonNumber, previousAirDate).ConfigureAwait(false);
                     if (sequelResult is not null)
                     {
-                        _logger.LogDebug("Found sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.ID, sequelSearch.ID);
+                        _logger.LogDebug("Found sequel {SequelAnimeName} for {AnimeName}. (Anime={AnimeID},SequelAnime={SequelAnimeID})", sequelSearch.DefaultTitle.Value, anime.DefaultTitle.Value, anime.AnidbID, sequelSearch.AnidbID);
                         return sequelResult;
                     }
                 }
 
-                _logger.LogDebug("No matched sequels found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+                _logger.LogDebug("No matched sequels found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
                 return null;
             }
 
-            _logger.LogDebug("No episodes found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.ID);
+            _logger.LogDebug("No episodes found for {AnimeName}. (Anime={AnimeID})", anime.DefaultTitle.Value, anime.AnidbID);
             return null;
         }
 
@@ -669,25 +661,25 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
         {
             if (year.HasValue && (!anime.AirDate.HasValue || anime.AirDate.Value.Year != year.Value))
             {
-                _logger.LogDebug("Year mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundYear={FoundYear},ExpectedYear={ExpectedYear})", match.SeriesName, anime.DefaultTitle.Value, anime.ID, anime.AirDate?.Year, year);
+                _logger.LogDebug("Year mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundYear={FoundYear},ExpectedYear={ExpectedYear})", match.SeriesName, anime.DefaultTitle.Value, anime.AnidbID, anime.AirDate?.Year, year);
                 return null;
             }
 
             if (animeType is not null && anime.Type != animeType)
             {
-                _logger.LogDebug("Type mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundType={FoundType},ExpectedType={ExpectedType})", match.SeriesName, anime.DefaultTitle.Value, anime.ID, anime.Type, animeType);
+                _logger.LogDebug("Type mismatch between {ShowName} and {AnimeName}. (Anime={AnimeID},FoundType={FoundType},ExpectedType={ExpectedType})", match.SeriesName, anime.DefaultTitle.Value, anime.AnidbID, anime.Type, animeType);
                 return null;
             }
         }
 
         foreach (var episode in episodes)
         {
-            _logger.LogDebug("Found episode {EpisodeType} {EpisodeNumber} for {ShowName}. (Anime={AnimeID},Episode={EpisodeID})", episode.Type.ToString(), episode.EpisodeNumber, anime.DefaultTitle.Value, anime.ID, episode.ID);
+            _logger.LogDebug("Found episode {EpisodeType} {EpisodeNumber} for {ShowName}. (Anime={AnimeID},Episode={EpisodeID})", episode.Type.ToString(), episode.EpisodeNumber, anime.DefaultTitle.Value, anime.AnidbID, episode.AnidbID);
         }
         var releaseInfo = new ReleaseInfo()
         {
-            ID = IdPrefix + episodes.Select(x => $"{anime.ID}-{x.ID}").Join(','),
-            CrossReferences = episodes.Select(x => new ReleaseVideoCrossReference() { AnidbAnimeID = anime.ID, AnidbEpisodeID = x.ID }).ToList(),
+            ID = IdPrefix + episodes.Select(x => $"{anime.AnidbID}-{x.AnidbID}").Join(','),
+            CrossReferences = episodes.Select(x => new ReleaseVideoCrossReference() { AnidbAnimeID = anime.AnidbID, AnidbEpisodeID = x.AnidbID }).ToList(),
         };
         return releaseInfo;
     }
@@ -786,6 +778,14 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
         _ when number is >= 1 and <= 26 => ((char)('a' + number - 1)).ToString(),
         _ => string.Empty,
     };
+
+    private static List<int> GetRelatedAnimeIDs(IAnidbAnime anime, RelationType relationType)
+        => anime.RelatedSeries
+            .Where(x => x.RelationType == relationType && x.RelatedID.Source == MetadataSource.AniDB)
+            .Select(x => x.RelatedID.TryGetNumericID<int>(out var id) ? id : 0)
+            .Where(id => id > 0)
+            .Order()
+            .ToList();
 
     private static (string type, int number, string suffix) ParseCreditType(string title)
     {
@@ -1070,7 +1070,7 @@ public partial class OfflineImporter : IReleaseInfoProvider<OfflineImporter.Conf
         foreach (var xref in info.CrossReferences)
         {
             var isValid = false;
-            if (_metadataService.GetEpisodeByProviderID(xref.AnidbEpisodeID, IMetadataService.ProviderName.AniDB) is not IAnidbEpisode anidbEpisode)
+            if (_metadataService.GetEntry<IAnidbEpisode>(new(MetadataSource.AniDB, MetadataEntityType.Episode, xref.AnidbEpisodeID.ToString(CultureInfo.InvariantCulture))) is not { } anidbEpisode)
                 return false;
             foreach (var range in ranges)
             {
